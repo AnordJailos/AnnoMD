@@ -1,0 +1,38 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain (MinGW-w64 cross compiler + NSIS)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 nsis make
+
+      - name: Build exe and installer
+        run: make
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AnnoMD-windows-x64
+          path: build/AnnoMD*.exe
+
+      # Push a tag like v1.2.0 to publish a GitHub Release with both files attached
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/AnnoMD*.exe
+          generate_release_notes: true
