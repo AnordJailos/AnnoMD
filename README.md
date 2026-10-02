@@ -51,7 +51,7 @@ On a modest laptop, in a VM, or when you already have a real IDE session running
 | **Fonts** | Quick presets (Segoe UI, Calibri, Cambria, Georgia, Times New Roman, Arial, Verdana, Consolas, Courier New), sizes 9–24 pt, plus **every installed font** via *More fonts…* |
 | **Themes** | Light, Sepia, Dark, Solarized Dark, Midnight (pure black, easy on OLED) and High Contrast. The title bar follows dark themes. |
 | **Find & Replace** | Match case, whole word, replace all. |
-| **Quality of life** | Word wrap, zoom, status bar (line, column, words, characters, encoding), always-on-top, settings remembered between runs, UTF-8 / UTF-16 files, original line endings preserved. |
+| **Quality of life** | Right-click menus (editor, preview and tabs), word wrap, zoom, status bar (line, column, words, characters, encoding), always-on-top, settings remembered between runs, UTF-8 / UTF-16 files, original line endings preserved. |
 
 ## Install
 

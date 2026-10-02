@@ -15,7 +15,7 @@
 #define APP L"AnnoMD"
 
 enum{ID_NEW=100,ID_OPEN,ID_SAVE,ID_SAVEAS,ID_EXIT,ID_CLOSE,ID_SAVEALL,ID_NEXT,ID_PREV,
- ID_UNDO=110,ID_REDO,ID_CUT,ID_COPY,ID_PASTE,ID_SELALL,ID_FIND,ID_FINDNEXT,ID_REPLACE,
+ ID_UNDO=110,ID_REDO,ID_CUT,ID_COPY,ID_PASTE,ID_SELALL,ID_FIND,ID_FINDNEXT,ID_REPLACE,ID_DELETE,
  ID_H1=130,ID_H2,ID_H3,ID_H4,ID_H5,ID_H6,
  ID_NORMAL=140,ID_QUOTE,ID_BULLET,ID_NUMBER,ID_TASK,ID_INDENT,ID_OUTDENT,ID_HR,
  ID_BOLD=160,ID_ITALIC,ID_STRIKE,ID_CODE,ID_CODEBLK,ID_LINK,ID_IMAGE,ID_FONTMORE,
@@ -167,7 +167,7 @@ static void refresh_preview(void){
  free(r);free(t);}
 
 /* ---------- ui state / documents / tabs ---------- */
-static int ask_save(void);static int load(const wchar_t*f);
+static int ask_save(void);static int load(const wchar_t*f);static int save(int as);static void cmd(int id);
 static void sync(void){
  CheckMenuRadioItem(mView,ID_VEDIT,ID_VPREV,ID_VEDIT+mode,MF_BYCOMMAND);
  CheckMenuRadioItem(mTheme,ID_THEME0,ID_THEME0+NT-1,ID_THEME0+theme,MF_BYCOMMAND);
@@ -215,6 +215,31 @@ static void zoom(int d){
  z=d?z+d:100;if(z<20)z=20;if(z>500)z=500;zoomPct=z;
  for(int i=0;i<nd;i++)SM(docs[i]->ed,EM_SETZOOM,z,100);SM(hPv,EM_SETZOOM,z,100);}
 
+/* right-click / Menu-key context menu for the editor and the preview */
+#define G(b) ((b)?0:MF_GRAYED)
+static void ctxmenu(HWND h,int x,int y){
+ int pv=(h==hPv);CHARRANGE c;SM(h,EM_EXGETSEL,0,&c);int sel=c.cpMax>c.cpMin;HMENU m=CreatePopupMenu();
+ if(!pv){AppendMenuW(m,MF_STRING|G(SM(h,EM_CANUNDO,0,0)),ID_UNDO,L"&Undo\tCtrl+Z");
+  AppendMenuW(m,MF_STRING|G(SM(h,EM_CANREDO,0,0)),ID_REDO,L"&Redo\tCtrl+Y");AppendMenuW(m,MF_SEPARATOR,0,0);
+  AppendMenuW(m,MF_STRING|G(sel),ID_CUT,L"Cu&t\tCtrl+X");}
+ AppendMenuW(m,MF_STRING|G(sel),ID_COPY,L"&Copy\tCtrl+C");
+ if(!pv){AppendMenuW(m,MF_STRING|G(SM(h,EM_CANPASTE,0,0)),ID_PASTE,L"&Paste\tCtrl+V");
+  AppendMenuW(m,MF_STRING|G(sel),ID_DELETE,L"&Delete\tDel");}
+ AppendMenuW(m,MF_SEPARATOR,0,0);AppendMenuW(m,MF_STRING,ID_SELALL,L"Select &All\tCtrl+A");
+ if(!pv){AppendMenuW(m,MF_SEPARATOR,0,0);AppendMenuW(m,MF_STRING,ID_BOLD,L"&Bold\tCtrl+B");
+  AppendMenuW(m,MF_STRING,ID_ITALIC,L"&Italic\tCtrl+I");AppendMenuW(m,MF_STRING,ID_CODE,L"Inline C&ode");
+  AppendMenuW(m,MF_STRING,ID_LINK,L"&Link\tCtrl+K");}
+ SetFocus(h);int id=TrackPopupMenu(m,TPM_RETURNCMD|TPM_RIGHTBUTTON,x,y,0,hWnd,0);DestroyMenu(m);if(id)cmd(id);}
+static LRESULT CALLBACK EP(HWND h,UINT m,WPARAM w,LPARAM l,UINT_PTR id,DWORD_PTR ref){
+ if(m==WM_RBUTTONUP){POINTL pt={(short)LOWORD(l),(short)HIWORD(l)};
+  if(h==hEd){CHARRANGE c;SM(h,EM_EXGETSEL,0,&c);LONG ix=(LONG)SM(h,EM_CHARFROMPOS,0,&pt);   /* click outside selection -> move caret */
+   if(ix<c.cpMin||ix>c.cpMax){CHARRANGE z={ix,ix};SM(h,EM_EXSETSEL,0,&z);}}
+  POINT sp={pt.x,pt.y};ClientToScreen(h,&sp);ctxmenu(h,sp.x,sp.y);return 0;}
+ if(m==WM_CONTEXTMENU){int x=(short)LOWORD(l),y=(short)HIWORD(l);
+  if(l==-1){POINT p={20,20};if(h==hEd){CHARRANGE c;SM(h,EM_EXGETSEL,0,&c);SM(h,EM_POSFROMCHAR,&p,c.cpMin);}ClientToScreen(h,&p);x=p.x;y=p.y;}
+  ctxmenu(h,x,y);return 0;}
+ return DefSubclassProc(h,m,w,l);}
+
 /* one RichEdit per document: each tab keeps its own text, undo history, caret and scroll */
 static HWND mked(void){
  HWND e=CreateWindowExW(0,L"RICHEDIT50W",L"",WS_CHILD|WS_VSCROLL|WS_HSCROLL|ES_MULTILINE|ES_AUTOVSCROLL|ES_AUTOHSCROLL|ES_NOHIDESEL|ES_WANTRETURN,
@@ -222,7 +247,7 @@ static HWND mked(void){
  SM(e,EM_SETTEXTMODE,TM_PLAINTEXT|TM_MULTILEVELUNDO,0);SM(e,EM_EXLIMITTEXT,0,0x7FFFFFF0);SM(e,EM_SETUNDOLIMIT,200,0);
  SM(e,EM_SETEVENTMASK,0,ENM_CHANGE|ENM_SELCHANGE|ENM_DROPFILES);SM(e,EM_SETMARGINS,EC_LEFTMARGIN|EC_RIGHTMARGIN,MAKELONG(mg,mg));
  DragAcceptFiles(e,1);SM(e,EM_SETTARGETDEVICE,0,wrap?0:1);if(zoomPct!=100)SM(e,EM_SETZOOM,zoomPct,100);
- style_ed(e);return e;}
+ SetWindowSubclass(e,EP,1,0);style_ed(e);return e;}
 static void switchdoc(int i){
  if(i<0||i>=nd)return;cur=i;hEd=docs[i]->ed;
  for(int j=0;j<nd;j++)if(j!=i)ShowWindow(docs[j]->ed,SW_HIDE);
@@ -265,6 +290,17 @@ static LRESULT CALLBACK TP(HWND h,UINT m,WPARAM w,LPARAM l){
    RECT c=t;c.left=t.right-xw;DrawTextW(mem,L"\x00D7",-1,&c,DT_SINGLELINE|DT_VCENTER|DT_CENTER);}
   RECT pl={nd*tw,0,nd*tw+pw,r.bottom};SetTextColor(mem,T->fg);DrawTextW(mem,L"+",-1,&pl,DT_SINGLELINE|DT_VCENTER|DT_CENTER);
   BitBlt(dc,0,0,r.right,r.bottom,mem,0,0,SRCCOPY);SelectObject(mem,ob);DeleteObject(bm);DeleteDC(mem);EndPaint(h,&ps);return 0;}
+ case WM_RBUTTONUP:{int x=(short)LOWORD(l),i=x/tw;if(i>=nd)return 0;
+  HMENU pm=CreatePopupMenu();AppendMenuW(pm,MF_STRING,1,L"&Close");AppendMenuW(pm,MF_STRING|G(nd>1),2,L"Close &Others");
+  AppendMenuW(pm,MF_STRING,3,L"&Save");AppendMenuW(pm,MF_STRING|G(docs[i]->fpath[0]),4,L"Copy Full &Path");
+  POINT pt={x,(short)HIWORD(l)};ClientToScreen(h,&pt);int cid=TrackPopupMenu(pm,TPM_RETURNCMD|TPM_RIGHTBUTTON,pt.x,pt.y,0,h,0);DestroyMenu(pm);
+  if(cid==1)closedoc(i);
+  else if(cid==2){Doc*keep=docs[i];for(int j=0;j<nd;){if(docs[j]==keep){j++;continue;}int b4=nd;closedoc(j);if(nd==b4)break;}
+   for(int j=0;j<nd;j++)if(docs[j]==keep){switchdoc(j);break;}}
+  else if(cid==3){switchdoc(i);save(0);}
+  else if(cid==4){const wchar_t*s=docs[i]->fpath;size_t n=(wcslen(s)+1)*sizeof(wchar_t);HGLOBAL g=GlobalAlloc(GMEM_MOVEABLE,n);
+   memcpy(GlobalLock(g),s,n);GlobalUnlock(g);if(OpenClipboard(h)){EmptyClipboard();SetClipboardData(CF_UNICODETEXT,g);CloseClipboard();}else GlobalFree(g);}
+  return 0;}
  case WM_LBUTTONDOWN:case WM_MBUTTONDOWN:{int x=(short)LOWORD(l),i=x/tw;
   if(i<nd){if(m==WM_MBUTTONDOWN||x>=(i+1)*tw-xw)closedoc(i);else switchdoc(i);}
   else if(x<nd*tw+pw)newdoc();
@@ -399,6 +435,7 @@ static void cmd(int id){
  case ID_CUT:SM(f,WM_CUT,0,0);break;
  case ID_COPY:SM(f,WM_COPY,0,0);break;
  case ID_PASTE:SM(hEd,WM_PASTE,0,0);break;
+ case ID_DELETE:SM(hEd,WM_CLEAR,0,0);break;
  case ID_SELALL:SM(f,EM_SETSEL,0,-1);break;
  case ID_FIND:openfind(0);break;
  case ID_REPLACE:openfind(1);break;
@@ -428,7 +465,7 @@ static void mkmenu(void){
  A(f,ID_SAVE,L"&Save\tCtrl+S");A(f,ID_SAVEAS,L"Save &As...\tCtrl+Shift+S");A(f,ID_SAVEALL,L"Save A&ll");S(f);
  A(f,ID_NEXT,L"N&ext Tab\tCtrl+Tab");A(f,ID_PREV,L"Pre&vious Tab\tCtrl+Shift+Tab");S(f);A(f,ID_EXIT,L"E&xit");
  A(e,ID_UNDO,L"&Undo\tCtrl+Z");A(e,ID_REDO,L"&Redo\tCtrl+Y");S(e);A(e,ID_CUT,L"Cu&t\tCtrl+X");A(e,ID_COPY,L"&Copy\tCtrl+C");
- A(e,ID_PASTE,L"&Paste\tCtrl+V");A(e,ID_SELALL,L"Select &All\tCtrl+A");S(e);
+ A(e,ID_PASTE,L"&Paste\tCtrl+V");A(e,ID_DELETE,L"&Delete\tDel");A(e,ID_SELALL,L"Select &All\tCtrl+A");S(e);
  A(e,ID_FIND,L"&Find...\tCtrl+F");A(e,ID_FINDNEXT,L"Find &Next\tF3");A(e,ID_REPLACE,L"&Replace...\tCtrl+H");
  for(int i=0;i<6;i++){wchar_t s[32];_snwprintf(s,32,L"Heading &%d\tCtrl+%d",i+1,i+1);A(p,ID_H1+i,s);}
  A(p,ID_NORMAL,L"&Normal Paragraph");S(p);A(p,ID_QUOTE,L"&Quote");A(p,ID_BULLET,L"&Bullet List");A(p,ID_NUMBER,L"N&umbered List");
@@ -458,7 +495,7 @@ static LRESULT CALLBACK WP(HWND h,UINT m,WPARAM w,LPARAM l){
   hTab=CreateWindowExW(0,L"MdTabs",L"",WS_CHILD|WS_VISIBLE,0,0,0,0,h,(HMENU)4,hInst,0);
   hPv=CreateWindowExW(0,L"RICHEDIT50W",L"",WS_CHILD|WS_VISIBLE|WS_VSCROLL|ES_MULTILINE|ES_AUTOVSCROLL|ES_READONLY,0,0,0,0,h,(HMENU)2,hInst,0);
   hSb=CreateWindowExW(0,STATUSCLASSNAMEW,L"",WS_CHILD|WS_VISIBLE,0,0,0,0,h,(HMENU)3,hInst,0);
-  SM(hPv,EM_SETUNDOLIMIT,0,0);SM(hPv,EM_SETMARGINS,EC_LEFTMARGIN|EC_RIGHTMARGIN,MAKELONG(mg,mg));
+  SM(hPv,EM_SETUNDOLIMIT,0,0);SetWindowSubclass(hPv,EP,1,0);SM(hPv,EM_SETMARGINS,EC_LEFTMARGIN|EC_RIGHTMARGIN,MAKELONG(mg,mg));
   DragAcceptFiles(h,1);return 0;}
  case WM_SIZE:layout();return 0;
  case WM_SETFOCUS:if(hEd)SetFocus(mode==2?hPv:hEd);return 0;
