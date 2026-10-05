@@ -16,23 +16,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # A release tag like v1.3.0 must match the VERSION file, otherwise the installer and the
+      # in-app version would disagree with the release page. Fail early instead.
+      - name: Tag must match the VERSION file
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          FILE="$(tr -d '[:space:]' < VERSION)"
+          if [ "$TAG" != "$FILE" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match the VERSION file ($FILE). Fix VERSION, then re-tag."
+            exit 1
+          fi
+
       - name: Install toolchain (MinGW-w64 cross compiler + NSIS)
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-mingw-w64-x86-64 nsis make
 
-      - name: Build exe and installer
-        run: make
+      - name: Build exe, installer and checksums
+        run: make sums
 
       - uses: actions/upload-artifact@v4
         with:
           name: AnnoMD-windows-x64
-          path: build/AnnoMD*.exe
+          path: |
+            build/AnnoMD.exe
+            build/AnnoMD-Setup.exe
+            build/SHA256SUMS.txt
 
-      # Push a tag like v1.2.0 to publish a GitHub Release with both files attached
+      # Push a tag like v1.3.0 to publish a GitHub Release with these files attached
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: build/AnnoMD*.exe
+          files: |
+            build/AnnoMD.exe
+            build/AnnoMD-Setup.exe
+            build/SHA256SUMS.txt
           generate_release_notes: true

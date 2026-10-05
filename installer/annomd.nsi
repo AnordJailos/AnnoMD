@@ -28,7 +28,8 @@ VIProductVersion "${VERSION}.0"
 VIAddVersionKey "ProductName" "${APPNAME}"
 VIAddVersionKey "FileDescription" "${APPNAME} installer"
 VIAddVersionKey "FileVersion" "${VERSION}"
-VIAddVersionKey "LegalCopyright" "Free to use"
+VIAddVersionKey "CompanyName" "AnordJailos"
+VIAddVersionKey "LegalCopyright" "MIT License"
 
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
@@ -49,16 +50,31 @@ VIAddVersionKey "LegalCopyright" "Free to use"
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
 
+; Refuse to overwrite / remove files while AnnoMD is open (it holds a named mutex while running)
+!macro CheckRunning
+  !define _L ${__LINE__}
+  retry_${_L}:
+  System::Call 'kernel32::OpenMutexW(i 0x00100000, i 0, w "AnnoMD_Running") p .R0'
+  ${If} $R0 <> 0
+    System::Call 'kernel32::CloseHandle(p $R0)'
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${APPNAME} is currently running.$\r$\n$\r$\nPlease close it, then click Retry." /SD IDCANCEL IDRETRY retry_${_L}
+    Abort
+  ${EndIf}
+  !undef _L
+!macroend
+
 Function .onInit
   ${IfNot} ${RunningX64}
     MessageBox MB_OK|MB_ICONSTOP "${APPNAME} needs 64-bit Windows."
     Abort
   ${EndIf}
   SetRegView 64
+  !insertmacro CheckRunning
 FunctionEnd
 
 Function un.onInit
   SetRegView 64
+  !insertmacro CheckRunning
 FunctionEnd
 
 Section "${APPNAME} (required)" SecMain
@@ -72,6 +88,9 @@ Section "${APPNAME} (required)" SecMain
   WriteRegStr   HKLM "Software\AnnoMD" "InstallDir" "$INSTDIR"
   WriteRegStr   HKLM "${UNKEY}" "DisplayName"     "${APPNAME}"
   WriteRegStr   HKLM "${UNKEY}" "DisplayVersion"  "${VERSION}"
+  WriteRegStr   HKLM "${UNKEY}" "Publisher"       "AnordJailos"
+  WriteRegStr   HKLM "${UNKEY}" "URLInfoAbout"    "https://github.com/AnordJailos/AnnoMD"
+  WriteRegStr   HKLM "${UNKEY}" "HelpLink"        "https://github.com/AnordJailos/AnnoMD/issues"
   WriteRegStr   HKLM "${UNKEY}" "DisplayIcon"     "$INSTDIR\${EXE}"
   WriteRegStr   HKLM "${UNKEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr   HKLM "${UNKEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'

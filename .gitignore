@@ -2,5 +2,7 @@ build/
 *.o
 *.res
 *.bak
+*.exe
+*.zip
 .vscode/
 .idea/

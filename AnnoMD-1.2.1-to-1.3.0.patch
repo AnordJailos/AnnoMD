@@ -1,0 +1,561 @@
+diff --git a/.github/workflows/build.yml b/.github/workflows/build.yml
+index 130c1c9..de419d9 100644
+--- a/.github/workflows/build.yml
++++ b/.github/workflows/build.yml
+@@ -16,23 +16,41 @@ jobs:
+     steps:
+       - uses: actions/checkout@v4
+ 
++      # A release tag like v1.3.0 must match the VERSION file, otherwise the installer and the
++      # in-app version would disagree with the release page. Fail early instead.
++      - name: Tag must match the VERSION file
++        if: startsWith(github.ref, 'refs/tags/v')
++        run: |
++          TAG="${GITHUB_REF_NAME#v}"
++          FILE="$(tr -d '[:space:]' < VERSION)"
++          if [ "$TAG" != "$FILE" ]; then
++            echo "::error::Tag $GITHUB_REF_NAME does not match the VERSION file ($FILE). Fix VERSION, then re-tag."
++            exit 1
++          fi
++
+       - name: Install toolchain (MinGW-w64 cross compiler + NSIS)
+         run: |
+           sudo apt-get update
+           sudo apt-get install -y gcc-mingw-w64-x86-64 nsis make
+ 
+-      - name: Build exe and installer
+-        run: make
++      - name: Build exe, installer and checksums
++        run: make sums
+ 
+       - uses: actions/upload-artifact@v4
+         with:
+           name: AnnoMD-windows-x64
+-          path: build/AnnoMD*.exe
++          path: |
++            build/AnnoMD.exe
++            build/AnnoMD-Setup.exe
++            build/SHA256SUMS.txt
+ 
+-      # Push a tag like v1.2.0 to publish a GitHub Release with both files attached
++      # Push a tag like v1.3.0 to publish a GitHub Release with these files attached
+       - name: Publish release
+         if: startsWith(github.ref, 'refs/tags/v')
+         uses: softprops/action-gh-release@v2
+         with:
+-          files: build/AnnoMD*.exe
++          files: |
++            build/AnnoMD.exe
++            build/AnnoMD-Setup.exe
++            build/SHA256SUMS.txt
+           generate_release_notes: true
+diff --git a/.github/workflows/winget.yml b/.github/workflows/winget.yml
+new file mode 100644
+index 0000000..f87f093
+--- /dev/null
++++ b/.github/workflows/winget.yml
+@@ -0,0 +1,34 @@
++# Opens an update pull request on microsoft/winget-pkgs after each GitHub Release.
++#
++# INACTIVE until both are true (see RELEASING.md):
++#   1. the first AnnoMD manifest has been submitted by hand and merged into winget-pkgs
++#   2. a repository secret named WINGET_TOKEN exists (classic PAT with public_repo scope)
++name: winget
++
++on:
++  release:
++    types: [released]
++  workflow_dispatch:
++    inputs:
++      tag:
++        description: 'Release tag to submit (e.g. v1.3.0)'
++        required: true
++
++jobs:
++  winget:
++    runs-on: windows-latest
++    env:
++      HAS_TOKEN: ${{ secrets.WINGET_TOKEN != '' }}
++    steps:
++      - name: Open update PR on microsoft/winget-pkgs
++        if: env.HAS_TOKEN == 'true'
++        uses: vedantmgoyal9/winget-releaser@v2
++        with:
++          identifier: AnordJailos.AnnoMD
++          installers-regex: '-Setup\.exe$'     # the installer only, not the portable AnnoMD.exe
++          release-tag: ${{ github.event.release.tag_name || github.event.inputs.tag }}
++          token: ${{ secrets.WINGET_TOKEN }}
++
++      - name: Skipped (no WINGET_TOKEN secret)
++        if: env.HAS_TOKEN != 'true'
++        run: echo "WINGET_TOKEN is not set - skipping. See RELEASING.md."
+diff --git a/.gitignore b/.gitignore
+index 6ae41a2..54bdb66 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -2,5 +2,7 @@ build/
+ *.o
+ *.res
+ *.bak
++*.exe
++*.zip
+ .vscode/
+ .idea/
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+new file mode 100644
+index 0000000..c685952
+--- /dev/null
++++ b/CHANGELOG.md
+@@ -0,0 +1,23 @@
++# Changelog
++
++All notable changes to AnnoMD. Versioning: [Semantic Versioning](https://semver.org).
++How to publish a release: see [RELEASING.md](RELEASING.md).
++
++## 1.3.0
++- **Help menu:** Check for Updates, AnnoMD on GitHub, Report an Issue, About AnnoMD.
++- **Check for Updates** asks GitHub for the latest release when you click it (never in the background).
++- The version is now built into `AnnoMD.exe` (Properties → Details) and shown in *Help → About*.
++- The installer detects a running AnnoMD and asks you to close it, instead of failing on a locked file.
++- Settings → Apps now shows the publisher and links.
++- Release workflow checks that the git tag matches `VERSION`, and attaches `SHA256SUMS.txt` to releases.
++- Optional workflow to publish updates to winget (inactive until configured; see RELEASING.md).
++
++## 1.2.1
++- Right-click context menus in the editor, the preview and on tabs. New Edit → Delete command.
++
++## 1.2.0
++- Tabs (one editor per file), draggable splitter, code blocks rendered as cards.
++- Windows installer, new "MD" icon, renamed to AnnoMD.
++
++## 1.1.0 and earlier
++- Initial Win32 reader/editor: File / Edit / Paragraph / Format / View / Theme menus, six themes, fonts, live preview.
+diff --git a/Makefile b/Makefile
+index 16f7c9b..e756ed8 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2,26 +2,37 @@
+ CROSS   ?= x86_64-w64-mingw32-
+ CC      := $(CROSS)gcc
+ WINDRES := $(CROSS)windres
+-VERSION := $(shell cat VERSION)
++VERSION := $(strip $(shell cat VERSION))
++V_MAJOR := $(word 1,$(subst ., ,$(VERSION)))
++V_MINOR := $(word 2,$(subst ., ,$(VERSION)))
++V_PATCH := $(word 3,$(subst ., ,$(VERSION)))
+ B       := build
+ LIBS    := -lcomctl32 -lcomdlg32 -lgdi32 -lshell32 -ldwmapi -luser32 -ladvapi32
+ CFLAGS  := -Os -s -w -ffunction-sections -fdata-sections -Wl,--gc-sections -municode -mwindows -static
+ 
+-.PHONY: all exe installer clean
++.PHONY: all exe installer sums clean
+ all: exe installer
+ exe: $(B)/AnnoMD.exe
+ installer: $(B)/AnnoMD-Setup.exe
+ 
+-$(B)/app.res: src/app.rc src/app.manifest assets/app.ico
++# VERSION is the single source of truth: it feeds the exe, its file properties and the installer
++$(B)/version.h: VERSION
+ 	@mkdir -p $(B)
+-	$(WINDRES) src/app.rc -O coff -o $@
++	printf '#define VER_MAJOR %s\n#define VER_MINOR %s\n#define VER_PATCH %s\n#define VER_STR "%s"\n' $(V_MAJOR) $(V_MINOR) $(V_PATCH) $(VERSION) > $@
+ 
+-$(B)/AnnoMD.exe: src/annomd.c $(B)/app.res
+-	$(CC) $(CFLAGS) src/annomd.c $(B)/app.res -o $@ $(LIBS)
++$(B)/app.res: src/app.rc src/app.manifest assets/app.ico $(B)/version.h
++	$(WINDRES) -I $(B) src/app.rc -O coff -o $@
++
++$(B)/AnnoMD.exe: src/annomd.c $(B)/app.res $(B)/version.h
++	$(CC) $(CFLAGS) -I$(B) src/annomd.c $(B)/app.res -o $@ $(LIBS)
+ 
+ $(B)/AnnoMD-Setup.exe: $(B)/AnnoMD.exe installer/annomd.nsi assets/app.ico VERSION
+ 	makensis -V1 -DVERSION=$(VERSION) -DEXE_PATH=$(abspath $(B)/AnnoMD.exe) \
+ 	  -DICON_PATH=$(abspath assets/app.ico) -DOUT_PATH=$(abspath $@) installer/annomd.nsi
+ 
++# checksums for the release page
++sums: all
++	cd $(B) && sha256sum AnnoMD.exe AnnoMD-Setup.exe > SHA256SUMS.txt
++
+ clean:
+ 	rm -rf $(B)
+diff --git a/README.md b/README.md
+index 267f399..665db17 100644
+--- a/README.md
++++ b/README.md
+@@ -51,7 +51,7 @@ On a modest laptop, in a VM, or when you already have a real IDE session running
+ | **Fonts** | Quick presets (Segoe UI, Calibri, Cambria, Georgia, Times New Roman, Arial, Verdana, Consolas, Courier New), sizes 9–24 pt, plus **every installed font** via *More fonts…* |
+ | **Themes** | Light, Sepia, Dark, Solarized Dark, Midnight (pure black, easy on OLED) and High Contrast. The title bar follows dark themes. |
+ | **Find & Replace** | Match case, whole word, replace all. |
+-| **Quality of life** | Right-click menus (editor, preview and tabs), word wrap, zoom, status bar (line, column, words, characters, encoding), always-on-top, settings remembered between runs, UTF-8 / UTF-16 files, original line endings preserved. |
++| **Quality of life** | Right-click menus (editor, preview and tabs), **Help → Check for Updates**, word wrap, zoom, status bar (line, column, words, characters, encoding), always-on-top, settings remembered between runs, UTF-8 / UTF-16 files, original line endings preserved. |
+ 
+ ## Install
+ 
+@@ -79,6 +79,17 @@ Comes after Linux. Follow the [roadmap](#roadmap).
+ | Linux | 🚧 Native port in progress |
+ | macOS | 🗓 Planned |
+ 
++## Updating
++
++- **From the app:** *Help → Check for Updates…* looks at the latest GitHub Release and offers to open the download page. It only runs when you click it — AnnoMD never contacts the internet in the background.
++- **Installer users:** run the new `AnnoMD-Setup.exe`. It installs over the old version and keeps your settings. If AnnoMD is still open, the installer asks you to close it.
++- **Portable users:** replace `AnnoMD.exe` with the new file.
++- **winget:** `winget upgrade AnordJailos.AnnoMD` — *once the package has been accepted into the winget repository (not yet).*
++- **Which version am I running?** *Help → About AnnoMD*, or right-click `AnnoMD.exe` → Properties → Details.
++- Each release lists a SHA-256 checksum (`SHA256SUMS.txt`) so you can verify your download.
++
++Versions follow [Semantic Versioning](https://semver.org). See the [changelog](CHANGELOG.md); maintainers: [RELEASING.md](RELEASING.md).
++
+ ## Keyboard shortcuts
+ 
+ | Action | Shortcut | Action | Shortcut |
+@@ -121,17 +132,23 @@ make CROSS=
+ 
+ ```
+ src/annomd.c            the whole application
+-src/app.rc, app.manifest  icon + Windows manifest (visual styles, DPI)
++src/app.rc, app.manifest  icon, version info + Windows manifest (visual styles, DPI)
+ assets/                 icon (and README logo)
+ installer/annomd.nsi    NSIS installer script
+ tools/make_icon.py      draws the icon (pure Python, no dependencies)
+-.github/workflows/      CI: builds the installer, publishes releases on tags
++.github/workflows/      CI: builds + publishes releases on tags; optional winget updates
++VERSION                 the single source of truth for the version number
++CHANGELOG.md            what changed in each version
++RELEASING.md            how to publish a release and how updates reach users
+ ```
+ 
+ ## Roadmap
+ 
+ - [x] Windows app: tabs, split/reading view, themes, fonts, find & replace
+ - [x] Windows installer + portable build
++- [x] Help menu: About + manual "Check for Updates"
++- [ ] winget package (manifest submission — see [RELEASING.md](RELEASING.md))
++- [ ] Silent self-update (only after the installer is code-signed)
+ - [ ] **Native Linux build** (GTK) + AppImage / `.deb`
+ - [ ] **macOS build**
+ - [ ] Real table rendering in the preview
+diff --git a/RELEASING.md b/RELEASING.md
+new file mode 100644
+index 0000000..090aa3f
+--- /dev/null
++++ b/RELEASING.md
+@@ -0,0 +1,78 @@
++# Releasing AnnoMD
++
++Versions follow [Semantic Versioning](https://semver.org): `MAJOR.MINOR.PATCH`
++
++| Change | Bump | Example |
++|---|---|---|
++| Bug fix | PATCH | 1.3.0 → 1.3.1 |
++| New feature, still compatible | MINOR | 1.3.1 → 1.4.0 |
++| Breaking change | MAJOR | 1.4.0 → 2.0.0 |
++
++The **`VERSION` file is the single source of truth.** The Makefile reads it and feeds the same number into
++`AnnoMD.exe` (shown in *Help → About* and in the file's Properties → Details), the installer, and Settings → Apps.
++
++## Publish a new version
++
++1. **Edit `VERSION`** (e.g. `1.4.0`) and add an entry to `CHANGELOG.md`.
++2. **Commit and push** to `main`:
++   ```sh
++   git add .
++   git commit -m "Release 1.4.0"
++   git push
++   ```
++3. **Tag it** — the tag must be `v` + the contents of `VERSION`:
++   ```sh
++   git tag v1.4.0
++   git push --tags
++   ```
++4. GitHub Actions then:
++   - **fails early** if the tag and `VERSION` disagree,
++   - builds `AnnoMD.exe` and `AnnoMD-Setup.exe`,
++   - publishes a GitHub Release with both files plus `SHA256SUMS.txt` and auto-generated release notes.
++5. Done. Users get it via the channels below.
++
++**Tagged the wrong thing?** Delete the tag and release, fix, and re-tag:
++```sh
++git tag -d v1.4.0 && git push origin :refs/tags/v1.4.0
++```
++(and delete the Release on GitHub's Releases page).
++
++## How users update
++
++| Who | How |
++|---|---|
++| Any user | **Help → Check for Updates…** asks GitHub for the latest release and offers to open the download page. It only runs when clicked; AnnoMD never checks in the background. |
++| Installer users | Run the new `AnnoMD-Setup.exe`. It installs over the old version and keeps settings. It asks you to close AnnoMD first if it is still running. |
++| Portable users | Replace `AnnoMD.exe` with the new file. |
++| winget users | `winget upgrade AnordJailos.AnnoMD` (once the package is accepted, see below). |
++
++Check a download against `SHA256SUMS.txt`:
++```powershell
++Get-FileHash .\AnnoMD-Setup.exe -Algorithm SHA256
++```
++
++## winget (Windows Package Manager)
++
++**One-time first submission (manual).** winget only automates *updates* to a package that already exists.
++
++1. On Windows: `winget install wingetcreate`
++2. Publish a release first (steps above), then run:
++   ```
++   wingetcreate new https://github.com/AnordJailos/AnnoMD/releases/download/v1.3.0/AnnoMD-Setup.exe
++   ```
++3. When prompted use: **PackageIdentifier** `AnordJailos.AnnoMD` · **Publisher** `AnordJailos` · **PackageName** `AnnoMD` ·
++   **License** `MIT` · **PackageUrl** `https://github.com/AnordJailos/AnnoMD` · installer type **nullsoft**, scope **machine**,
++   silent switch **/S**.
++4. Let it submit the pull request to `microsoft/winget-pkgs` (it needs a GitHub token; the tool walks you through it) and
++   wait for review. Note: the installer is **not code-signed**, so reviewers/automated checks may take longer or ask questions.
++
++**After that is merged — automatic updates.** The workflow `.github/workflows/winget.yml` opens the update pull request for
++every new release. To switch it on, add a repository secret **`WINGET_TOKEN`** (Settings → Secrets and variables → Actions):
++a classic personal access token with the `public_repo` scope. Until the secret exists the workflow does nothing.
++
++## Why there is no silent self-updater (yet)
++
++An app that downloads and runs new executables by itself must be able to prove the download is genuine. The installer is
++not code-signed yet, and it installs to Program Files (needs administrator rights), so a self-updater would be a security
++risk. Plan: sign the installer first, then reconsider. Until then updates are opt-in and visible: the in-app check, the
++installer, or winget.
+diff --git a/VERSION b/VERSION
+index 6085e94..f0bb29e 100644
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-1.2.1
++1.3.0
+diff --git a/installer/annomd.nsi b/installer/annomd.nsi
+index 42fa434..64a26e8 100644
+--- a/installer/annomd.nsi
++++ b/installer/annomd.nsi
+@@ -28,7 +28,8 @@ VIProductVersion "${VERSION}.0"
+ VIAddVersionKey "ProductName" "${APPNAME}"
+ VIAddVersionKey "FileDescription" "${APPNAME} installer"
+ VIAddVersionKey "FileVersion" "${VERSION}"
+-VIAddVersionKey "LegalCopyright" "Free to use"
++VIAddVersionKey "CompanyName" "AnordJailos"
++VIAddVersionKey "LegalCopyright" "MIT License"
+ 
+ !include "MUI2.nsh"
+ !include "LogicLib.nsh"
+@@ -49,16 +50,31 @@ VIAddVersionKey "LegalCopyright" "Free to use"
+ !insertmacro MUI_UNPAGE_INSTFILES
+ !insertmacro MUI_LANGUAGE "English"
+ 
++; Refuse to overwrite / remove files while AnnoMD is open (it holds a named mutex while running)
++!macro CheckRunning
++  !define _L ${__LINE__}
++  retry_${_L}:
++  System::Call 'kernel32::OpenMutexW(i 0x00100000, i 0, w "AnnoMD_Running") p .R0'
++  ${If} $R0 <> 0
++    System::Call 'kernel32::CloseHandle(p $R0)'
++    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${APPNAME} is currently running.$\r$\n$\r$\nPlease close it, then click Retry." /SD IDCANCEL IDRETRY retry_${_L}
++    Abort
++  ${EndIf}
++  !undef _L
++!macroend
++
+ Function .onInit
+   ${IfNot} ${RunningX64}
+     MessageBox MB_OK|MB_ICONSTOP "${APPNAME} needs 64-bit Windows."
+     Abort
+   ${EndIf}
+   SetRegView 64
++  !insertmacro CheckRunning
+ FunctionEnd
+ 
+ Function un.onInit
+   SetRegView 64
++  !insertmacro CheckRunning
+ FunctionEnd
+ 
+ Section "${APPNAME} (required)" SecMain
+@@ -72,6 +88,9 @@ Section "${APPNAME} (required)" SecMain
+   WriteRegStr   HKLM "Software\AnnoMD" "InstallDir" "$INSTDIR"
+   WriteRegStr   HKLM "${UNKEY}" "DisplayName"     "${APPNAME}"
+   WriteRegStr   HKLM "${UNKEY}" "DisplayVersion"  "${VERSION}"
++  WriteRegStr   HKLM "${UNKEY}" "Publisher"       "AnordJailos"
++  WriteRegStr   HKLM "${UNKEY}" "URLInfoAbout"    "https://github.com/AnordJailos/AnnoMD"
++  WriteRegStr   HKLM "${UNKEY}" "HelpLink"        "https://github.com/AnordJailos/AnnoMD/issues"
+   WriteRegStr   HKLM "${UNKEY}" "DisplayIcon"     "$INSTDIR\${EXE}"
+   WriteRegStr   HKLM "${UNKEY}" "InstallLocation" "$INSTDIR"
+   WriteRegStr   HKLM "${UNKEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
+diff --git a/src/annomd.c b/src/annomd.c
+index 9c4acfb..248549f 100644
+--- a/src/annomd.c
++++ b/src/annomd.c
+@@ -7,19 +7,29 @@
+ #include <richedit.h>
+ #include <shellapi.h>
+ #include <dwmapi.h>
++#include <winhttp.h>
+ #include <wctype.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <stdarg.h>
+ #include <string.h>
+ #define APP L"AnnoMD"
++#if defined(__has_include)
++# if __has_include("version.h")
++#  include "version.h"          /* generated by the Makefile from the VERSION file */
++# endif
++#endif
++#ifndef VER_STR
++# define VER_STR "dev"
++#endif
++#define REPO_URL L"https://github.com/AnordJailos/AnnoMD"
+ 
+ enum{ID_NEW=100,ID_OPEN,ID_SAVE,ID_SAVEAS,ID_EXIT,ID_CLOSE,ID_SAVEALL,ID_NEXT,ID_PREV,
+  ID_UNDO=110,ID_REDO,ID_CUT,ID_COPY,ID_PASTE,ID_SELALL,ID_FIND,ID_FINDNEXT,ID_REPLACE,ID_DELETE,
+  ID_H1=130,ID_H2,ID_H3,ID_H4,ID_H5,ID_H6,
+  ID_NORMAL=140,ID_QUOTE,ID_BULLET,ID_NUMBER,ID_TASK,ID_INDENT,ID_OUTDENT,ID_HR,
+  ID_BOLD=160,ID_ITALIC,ID_STRIKE,ID_CODE,ID_CODEBLK,ID_LINK,ID_IMAGE,ID_FONTMORE,
+- ID_VEDIT=170,ID_VSPLIT,ID_VPREV,ID_WRAP,ID_ZIN,ID_ZOUT,ID_ZRESET,ID_SBAR,ID_TOP,
++ ID_VEDIT=170,ID_VSPLIT,ID_VPREV,ID_WRAP,ID_ZIN,ID_ZOUT,ID_ZRESET,ID_SBAR,ID_TOP,ID_ABOUT,ID_UPDATE,ID_HOME,ID_ISSUES,
+  ID_FONT0=200,ID_SIZE0=230,ID_THEME0=250};
+ 
+ typedef struct{const wchar_t*n;COLORREF bg,fg,hd,cd,cb,lk,mu;int dark;}Theme;
+@@ -413,6 +423,51 @@ static void openfind(int rep){
+  fr.lpstrFindWhat=fbuf;fr.wFindWhatLen=256;fr.lpstrReplaceWith=rbuf;fr.wReplaceWithLen=256;fr.Flags=FR_DOWN|keep;
+  hFind=rep?ReplaceTextW(&fr):FindTextW(&fr);}
+ 
++/* ---------- About / update check ----------
++   Manual only: nothing runs in the background. WinHTTP is loaded on demand, so normal startup stays light.
++   It asks github.com where ".../releases/latest" redirects to, which is ".../releases/tag/vX.Y.Z". */
++static const wchar_t VERW[]=L"" VER_STR;
++static int updBusy;
++static void vparse(const wchar_t*s,long*v){wchar_t*e;v[0]=v[1]=v[2]=0;if(*s=='v'||*s=='V')s++;
++ for(int i=0;i<3;i++){v[i]=wcstol(s,&e,10);if(e==s||*e!='.')break;s=e+1;}}
++static int vercmp(const wchar_t*a,const wchar_t*b){long x[3],y[3];vparse(a,x);vparse(b,y);
++ for(int i=0;i<3;i++)if(x[i]!=y[i])return x[i]>y[i]?1:-1;return 0;}
++static const wchar_t*tag_of(const wchar_t*loc){const wchar_t*p=wcsstr(loc,L"/releases/tag/");return p?p+14:L"";}
++
++typedef HINTERNET(WINAPI*P_Open)(LPCWSTR,DWORD,LPCWSTR,LPCWSTR,DWORD);
++typedef HINTERNET(WINAPI*P_Connect)(HINTERNET,LPCWSTR,INTERNET_PORT,DWORD);
++typedef HINTERNET(WINAPI*P_OpenRequest)(HINTERNET,LPCWSTR,LPCWSTR,LPCWSTR,LPCWSTR,LPCWSTR*,DWORD);
++typedef BOOL(WINAPI*P_SetOption)(HINTERNET,DWORD,LPVOID,DWORD);
++typedef BOOL(WINAPI*P_SetTimeouts)(HINTERNET,int,int,int,int);
++typedef BOOL(WINAPI*P_SendRequest)(HINTERNET,LPCWSTR,DWORD,LPVOID,DWORD,DWORD,DWORD_PTR);
++typedef BOOL(WINAPI*P_ReceiveResponse)(HINTERNET,LPVOID);
++typedef BOOL(WINAPI*P_QueryHeaders)(HINTERNET,DWORD,LPCWSTR,LPVOID,LPDWORD,LPDWORD);
++typedef BOOL(WINAPI*P_CloseHandle)(HINTERNET);
++#ifndef WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY
++#define WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY 4
++#endif
++static DWORD WINAPI updthread(LPVOID u){
++ wchar_t*tag=0;int ok=0;HMODULE d=LoadLibraryW(L"winhttp.dll");
++#define PF(n) P_##n f##n=d?(P_##n)GetProcAddress(d,"WinHttp" #n):0;
++ PF(Open)PF(Connect)PF(OpenRequest)PF(SetOption)PF(SetTimeouts)PF(SendRequest)PF(ReceiveResponse)PF(QueryHeaders)PF(CloseHandle)
++ if(fOpen&&fConnect&&fOpenRequest&&fSetOption&&fSetTimeouts&&fSendRequest&&fReceiveResponse&&fQueryHeaders&&fCloseHandle){
++  HINTERNET s=fOpen(L"AnnoMD/" VER_STR,WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,0,0,0);
++  if(!s)s=fOpen(L"AnnoMD/" VER_STR,WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,0,0,0);
++  if(s){DWORD pr=0x800;fSetOption(s,WINHTTP_OPTION_SECURE_PROTOCOLS,&pr,sizeof pr);fSetTimeouts(s,6000,6000,8000,8000);   /* TLS 1.2 */
++   HINTERNET c=fConnect(s,L"github.com",INTERNET_DEFAULT_HTTPS_PORT,0);
++   if(c){HINTERNET r=fOpenRequest(c,L"HEAD",L"/AnordJailos/AnnoMD/releases/latest",0,0,0,WINHTTP_FLAG_SECURE);
++    if(r){DWORD pol=WINHTTP_OPTION_REDIRECT_POLICY_NEVER;fSetOption(r,WINHTTP_OPTION_REDIRECT_POLICY,&pol,sizeof pol);
++     if(fSendRequest(r,0,0,0,0,0,0)&&fReceiveResponse(r,0)){wchar_t loc[700];DWORD n=sizeof loc;
++      if(fQueryHeaders(r,WINHTTP_QUERY_LOCATION,0,loc,&n,0)){ok=1;tag=_wcsdup(tag_of(loc));}}
++     fCloseHandle(r);}
++    fCloseHandle(c);}
++   fCloseHandle(s);}}
++ if(d)FreeLibrary(d);
++ PostMessageW(hWnd,WM_APP+1,ok,(LPARAM)tag);return 0;}
++static void checkupdates(void){
++ if(updBusy)return;updBusy=1;sbset(2,L"Checking for updates...");
++ HANDLE t=CreateThread(0,0,updthread,0,0,0);if(t)CloseHandle(t);else{updBusy=0;status();}}
++
+ /* ---------- commands ---------- */
+ static void cmd(int id){
+  HWND f=GetFocus()==hPv?hPv:hEd;
+@@ -454,7 +509,13 @@ static void cmd(int id){
+  case ID_WRAP:wrap=!wrap;for(int i=0;i<nd;i++)SM(docs[i]->ed,EM_SETTARGETDEVICE,0,wrap?0:1);sync();break;
+  case ID_SBAR:showSb=!showSb;sync();layout();break;
+  case ID_TOP:top=!top;SetWindowPos(hWnd,top?HWND_TOPMOST:HWND_NOTOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE);sync();break;
+- case ID_ZIN:zoom(10);break;case ID_ZOUT:zoom(-10);break;case ID_ZRESET:zoom(0);break;}}
++ case ID_ZIN:zoom(10);break;case ID_ZOUT:zoom(-10);break;case ID_ZRESET:zoom(0);break;
++ case ID_UPDATE:checkupdates();break;
++ case ID_HOME:ShellExecuteW(hWnd,L"open",REPO_URL,0,0,SW_SHOWNORMAL);break;
++ case ID_ISSUES:ShellExecuteW(hWnd,L"open",REPO_URL L"/issues",0,0,SW_SHOWNORMAL);break;
++ case ID_ABOUT:{wchar_t m[400];wcscpy(m,APP L" ");wcscat(m,VERW);
++  wcscat(m,L"\n\nA tiny native Markdown reader and editor.\nNo IDE required.\n\n" REPO_URL L"\nMIT License");
++  MessageBoxW(hWnd,m,L"About " APP,MB_ICONINFORMATION);break;}}}
+ 
+ static void mkmenu(void){
+  HMENU f=CreatePopupMenu(),e=CreatePopupMenu(),p=CreatePopupMenu(),o=CreatePopupMenu(),t;
+@@ -481,7 +542,10 @@ static void mkmenu(void){
+  for(int i=0;i<NT;i++)A(t,ID_THEME0+i,TH[i].n);
+  AppendMenuW(mBar,MF_POPUP,(UINT_PTR)f,L"&File");AppendMenuW(mBar,MF_POPUP,(UINT_PTR)e,L"&Edit");
+  AppendMenuW(mBar,MF_POPUP,(UINT_PTR)p,L"&Paragraph");AppendMenuW(mBar,MF_POPUP,(UINT_PTR)o,L"F&ormat");
+- AppendMenuW(mBar,MF_POPUP,(UINT_PTR)mView,L"&View");AppendMenuW(mBar,MF_POPUP,(UINT_PTR)t,L"&Theme");}
++ AppendMenuW(mBar,MF_POPUP,(UINT_PTR)mView,L"&View");AppendMenuW(mBar,MF_POPUP,(UINT_PTR)t,L"&Theme");
++ HMENU hm=CreatePopupMenu();A(hm,ID_UPDATE,L"Check for &Updates...");S(hm);A(hm,ID_HOME,L"AnnoMD on &GitHub");
++ A(hm,ID_ISSUES,L"&Report an Issue");S(hm);A(hm,ID_ABOUT,L"&About AnnoMD");
++ AppendMenuW(mBar,MF_POPUP,(UINT_PTR)hm,L"&Help");}
+ 
+ static LRESULT CALLBACK WP(HWND h,UINT m,WPARAM w,LPARAM l){
+  if(WM_FINDMSG&&m==WM_FINDMSG){FINDREPLACEW*q=(FINDREPLACEW*)l;
+@@ -525,6 +589,14 @@ static LRESULT CALLBACK WP(HWND h,UINT m,WPARAM w,LPARAM l){
+    SetBkMode(d->hDC,TRANSPARENT);SetTextColor(d->hDC,TH[theme].fg);RECT r=d->rcItem;r.left+=8;
+    DrawTextW(d->hDC,(wchar_t*)d->itemData,-1,&r,DT_SINGLELINE|DT_VCENTER|DT_NOPREFIX);return TRUE;}
+   break;}
++ case WM_APP+1:{wchar_t*tag=(wchar_t*)l,msg[300];updBusy=0;status();
++  if(!w||!tag)MessageBoxW(h,L"Couldn't reach GitHub.\nCheck your internet connection and try again.",APP,MB_ICONWARNING);
++  else if(!tag[0])MessageBoxW(h,L"No releases have been published yet.",APP,MB_ICONINFORMATION);
++  else if(vercmp(tag,VERW)>0){wcscpy(msg,L"A new version of AnnoMD is available: ");wcsncat(msg,tag,40);
++   wcscat(msg,L"\nYou are running: ");wcscat(msg,VERW);wcscat(msg,L"\n\nOpen the download page?");
++   if(MessageBoxW(h,msg,APP,MB_YESNO|MB_ICONINFORMATION)==IDYES)ShellExecuteW(h,L"open",REPO_URL L"/releases/latest",0,0,SW_SHOWNORMAL);}
++  else{wcscpy(msg,L"You're up to date.\nAnnoMD ");wcscat(msg,VERW);wcscat(msg,L" is the latest version.");MessageBoxW(h,msg,APP,MB_ICONINFORMATION);}
++  free(tag);return 0;}
+  case WM_DROPFILES:dropfiles((HDROP)w);DragFinish((HDROP)w);return 0;
+  case WM_CLOSE:if(ask_all()){saveini();DestroyWindow(h);}return 0;
+  case WM_DESTROY:PostQuitMessage(0);return 0;}
+@@ -542,7 +614,7 @@ static ACCEL AC[]={
+  {FVIRTKEY|FCONTROL,VK_OEM_PLUS,ID_ZIN},{FVIRTKEY|FCONTROL,VK_OEM_MINUS,ID_ZOUT},{FVIRTKEY|FCONTROL,'0',ID_ZRESET}};
+ 
+ int WINAPI wWinMain(HINSTANCE hi,HINSTANCE hp,PWSTR cl,int sw){
+- (void)hp;(void)cl;hInst=hi;LoadLibraryW(L"Msftedit.dll");
++ (void)hp;(void)cl;hInst=hi;CreateMutexW(0,FALSE,L"AnnoMD_Running");LoadLibraryW(L"Msftedit.dll");
+  INITCOMMONCONTROLSEX ic={sizeof ic,ICC_BAR_CLASSES};InitCommonControlsEx(&ic);
+  loadini();WM_FINDMSG=RegisterWindowMessageW(FINDMSGSTRINGW);
+  HDC dc=GetDC(0);dpi=GetDeviceCaps(dc,LOGPIXELSX);ReleaseDC(0,dc);
+diff --git a/src/app.rc b/src/app.rc
+index 276d8e2..0a3136c 100644
+--- a/src/app.rc
++++ b/src/app.rc
+@@ -1,2 +1,34 @@
++#include <winver.h>
++#include "version.h"          /* generated by the Makefile from the VERSION file */
++
+ 1 ICON "assets/app.ico"
+ 1 24 "src/app.manifest"
++
++VS_VERSION_INFO VERSIONINFO
++ FILEVERSION VER_MAJOR,VER_MINOR,VER_PATCH,0
++ PRODUCTVERSION VER_MAJOR,VER_MINOR,VER_PATCH,0
++ FILEFLAGSMASK 0x3fL
++ FILEFLAGS 0x0L
++ FILEOS VOS_NT_WINDOWS32
++ FILETYPE VFT_APP
++ FILESUBTYPE 0x0L
++BEGIN
++  BLOCK "StringFileInfo"
++  BEGIN
++    BLOCK "040904b0"
++    BEGIN
++      VALUE "CompanyName", "AnordJailos"
++      VALUE "FileDescription", "AnnoMD - tiny Markdown reader and editor"
++      VALUE "FileVersion", VER_STR
++      VALUE "InternalName", "AnnoMD"
++      VALUE "LegalCopyright", "MIT License"
++      VALUE "OriginalFilename", "AnnoMD.exe"
++      VALUE "ProductName", "AnnoMD"
++      VALUE "ProductVersion", VER_STR
++    END
++  END
++  BLOCK "VarFileInfo"
++  BEGIN
++    VALUE "Translation", 0x409, 1200
++  END
++END

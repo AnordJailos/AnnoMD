@@ -51,7 +51,7 @@ On a modest laptop, in a VM, or when you already have a real IDE session running
 | **Fonts** | Quick presets (Segoe UI, Calibri, Cambria, Georgia, Times New Roman, Arial, Verdana, Consolas, Courier New), sizes 9–24 pt, plus **every installed font** via *More fonts…* |
 | **Themes** | Light, Sepia, Dark, Solarized Dark, Midnight (pure black, easy on OLED) and High Contrast. The title bar follows dark themes. |
 | **Find & Replace** | Match case, whole word, replace all. |
-| **Quality of life** | Right-click menus (editor, preview and tabs), word wrap, zoom, status bar (line, column, words, characters, encoding), always-on-top, settings remembered between runs, UTF-8 / UTF-16 files, original line endings preserved. |
+| **Quality of life** | Right-click menus (editor, preview and tabs), **Help → Check for Updates**, word wrap, zoom, status bar (line, column, words, characters, encoding), always-on-top, settings remembered between runs, UTF-8 / UTF-16 files, original line endings preserved. |
 
 ## Install
 
@@ -78,6 +78,17 @@ Comes after Linux. Follow the [roadmap](#roadmap).
 | Windows x64 | ✅ Available — installer + portable |
 | Linux | 🚧 Native port in progress |
 | macOS | 🗓 Planned |
+
+## Updating
+
+- **From the app:** *Help → Check for Updates…* looks at the latest GitHub Release and offers to open the download page. It only runs when you click it — AnnoMD never contacts the internet in the background.
+- **Installer users:** run the new `AnnoMD-Setup.exe`. It installs over the old version and keeps your settings. If AnnoMD is still open, the installer asks you to close it.
+- **Portable users:** replace `AnnoMD.exe` with the new file.
+- **winget:** `winget upgrade AnordJailos.AnnoMD` — *once the package has been accepted into the winget repository (not yet).*
+- **Which version am I running?** *Help → About AnnoMD*, or right-click `AnnoMD.exe` → Properties → Details.
+- Each release lists a SHA-256 checksum (`SHA256SUMS.txt`) so you can verify your download.
+
+Versions follow [Semantic Versioning](https://semver.org). See the [changelog](CHANGELOG.md); maintainers: [RELEASING.md](RELEASING.md).
 
 ## Keyboard shortcuts
 
@@ -121,17 +132,23 @@ make CROSS=
 
 ```
 src/annomd.c            the whole application
-src/app.rc, app.manifest  icon + Windows manifest (visual styles, DPI)
+src/app.rc, app.manifest  icon, version info + Windows manifest (visual styles, DPI)
 assets/                 icon (and README logo)
 installer/annomd.nsi    NSIS installer script
 tools/make_icon.py      draws the icon (pure Python, no dependencies)
-.github/workflows/      CI: builds the installer, publishes releases on tags
+.github/workflows/      CI: builds + publishes releases on tags; optional winget updates
+VERSION                 the single source of truth for the version number
+CHANGELOG.md            what changed in each version
+RELEASING.md            how to publish a release and how updates reach users
 ```
 
 ## Roadmap
 
 - [x] Windows app: tabs, split/reading view, themes, fonts, find & replace
 - [x] Windows installer + portable build
+- [x] Help menu: About + manual "Check for Updates"
+- [ ] winget package (manifest submission — see [RELEASING.md](RELEASING.md))
+- [ ] Silent self-update (only after the installer is code-signed)
 - [ ] **Native Linux build** (GTK) + AppImage / `.deb`
 - [ ] **macOS build**
 - [ ] Real table rendering in the preview
