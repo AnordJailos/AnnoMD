@@ -1,0 +1,15 @@
+# Keeps the GitHub Actions used by the workflows up to date.
+# Dependabot opens one grouped pull request per month; CI builds it, you review and merge.
+# Merging never publishes a release - only pushing a v* tag does.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "ci"
+    groups:
+      github-actions:
+        patterns:
+          - "*"

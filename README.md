@@ -86,9 +86,31 @@ Comes after Linux. Follow the [roadmap](#roadmap).
 - **Portable users:** replace `AnnoMD.exe` with the new file.
 - **winget:** `winget upgrade AnordJailos.AnnoMD` — *once the package has been accepted into the winget repository (not yet).*
 - **Which version am I running?** *Help → About AnnoMD*, or right-click `AnnoMD.exe` → Properties → Details.
-- Each release lists a SHA-256 checksum (`SHA256SUMS.txt`) so you can verify your download.
+- Each release lists a SHA-256 checksum (`SHA256SUMS.txt`) — see [Verify your download](#verify-your-download).
 
 Versions follow [Semantic Versioning](https://semver.org). See the [changelog](CHANGELOG.md); maintainers: [RELEASING.md](RELEASING.md).
+
+## Verify your download
+
+Every release includes a `SHA256SUMS.txt` file containing the SHA-256 fingerprint of each download. Checking it confirms that the file you have is exactly the one that was published — not corrupted or altered on the way.
+
+**Windows (PowerShell)** — open it in the folder that contains the download and `SHA256SUMS.txt`:
+
+```powershell
+$expected = ((Get-Content .\SHA256SUMS.txt | Where-Object { $_ -match 'AnnoMD-Setup.exe' }) -split '\s+')[0]
+$actual   = (Get-FileHash .\AnnoMD-Setup.exe -Algorithm SHA256).Hash
+if ($actual -eq $expected) { "OK - file matches the release" } else { "MISMATCH - do not run it" }
+```
+
+Use `AnnoMD.exe` instead of `AnnoMD-Setup.exe` for the portable build. To see the fingerprint and compare it by eye, run `Get-FileHash .\AnnoMD-Setup.exe -Algorithm SHA256` (or `certutil -hashfile AnnoMD-Setup.exe SHA256` in Command Prompt); capital vs. lowercase letters don't matter.
+
+**Installed copy:** the installer places the same `AnnoMD.exe` that is attached to the release, so `Get-FileHash "C:\Program Files\AnnoMD\AnnoMD.exe" -Algorithm SHA256` should equal the `AnnoMD.exe` line in `SHA256SUMS.txt`.
+
+**Linux / macOS:** `sha256sum -c SHA256SUMS.txt --ignore-missing` (macOS: `shasum -a 256 AnnoMD-Setup.exe`, then compare).
+
+If it doesn't match, don't run it: download it again from the [Releases](../../releases) page, and open an issue if it still differs.
+
+> A checksum catches corrupted or tampered downloads, but it is published in the same place as the file, so it cannot protect against a compromised release. Code signing (planned) covers that.
 
 ## Keyboard shortcuts
 

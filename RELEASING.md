@@ -14,6 +14,8 @@ The **`VERSION` file is the single source of truth.** The Makefile reads it and 
 ## Publish a new version
 
 1. **Edit `VERSION`** (e.g. `1.4.0`) and add an entry to `CHANGELOG.md`.
+   > **Windows:** edit `VERSION` in a text editor. In Windows PowerShell, `echo 1.4.0 > VERSION` saves it as UTF-16, which breaks the build
+   > (CI will stop it with a tag/VERSION mismatch). Safe alternative: `Set-Content -Encoding ascii -NoNewline VERSION 1.4.0`.
 2. **Commit and push** to `main`:
    ```sh
    git add .
@@ -36,6 +38,21 @@ The **`VERSION` file is the single source of truth.** The Makefile reads it and 
 git tag -d v1.4.0 && git push origin :refs/tags/v1.4.0
 ```
 (and delete the Release on GitHub's Releases page).
+
+## Rules that keep updates working
+
+- **Never change a published release.** Don't re-upload its files or move its tag. People have already verified those checksums and
+  winget stores them. Fix forward by publishing the next patch version.
+- **Pulling a bad release:** edit it on GitHub and tick *Set as a pre-release* (or delete it). *Help → Check for Updates* follows
+  GitHub's "latest release", which skips pre-releases and drafts, so it falls back to the previous good version. Then ship a fix.
+- **Keep versions plain `X.Y.Z`** (no `-beta1` suffix): the build turns them into numeric file-version fields. For beta testing,
+  publish a normal number and tick *pre-release*.
+- **Keep these names stable**, or in-place upgrades can leave duplicates: the uninstall entry `AnnoMD`, the install folder, the settings
+  folder/file (`%APPDATA%\AnnoMD\settings.ini`), the `AnnoMD_Running` mutex and the `AnnoMD.md` file type.
+- **Settings:** every new setting needs a default, and existing keys must not be renamed.
+- **Security fixes** ship as a patch release right away.
+- **Dependabot** opens one pull request a month to update the GitHub Actions used by the workflows. CI builds it; merge it when green.
+  Merging never publishes a release — only a `v*` tag does.
 
 ## How users update
 

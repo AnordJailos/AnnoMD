@@ -3,6 +3,12 @@
 All notable changes to AnnoMD. Versioning: [Semantic Versioning](https://semver.org).
 How to publish a release: see [RELEASING.md](RELEASING.md).
 
+## 1.3.1
+- README: new **Verify your download** section (how to check a download against `SHA256SUMS.txt`).
+- Dependabot now keeps the GitHub Actions used by the release workflows up to date (one pull request per month).
+- RELEASING.md: Windows note for editing `VERSION`, and the rules for keeping updates working.
+- No changes to how the app behaves — this release ships the documentation and exercises the release pipeline end to end.
+
 ## 1.3.0
 - **Help menu:** Check for Updates, AnnoMD on GitHub, Report an Issue, About AnnoMD.
 - **Check for Updates** asks GitHub for the latest release when you click it (never in the background).
